@@ -1,0 +1,11 @@
+apiVersion: v2
+name: common-service-chart
+description: >
+  Generic, reusable Kubernetes Service + Deployment chart for any language or
+  runtime (Java, Node, Python, static frontends via nginx, etc.). Replaces the
+  per-language, per-cloud Terraform module previously used to deploy services
+  directly. Designed to be rendered and synced by ArgoCD (GitOps) rather than
+  applied by Terraform.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
