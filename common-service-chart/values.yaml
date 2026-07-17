@@ -1,0 +1,229 @@
+# Default values for common-service-chart.
+# One release of this chart == one service. Mirrors the field-per-line style
+# of the original vars.tf so it's easy to cross-reference during migration.
+
+# -- Required. Name of the service. Used to name the Deployment, and combined
+# with serviceSuffix to name the Service. (was var.service_name)
+serviceName: ""
+
+# -- Suffix appended only to the Service resource name, e.g. "orders-api-service".
+# (was var.service_suffix)
+serviceSuffix: "-service"
+
+# -- Documentation/label value only. The actual Kubernetes namespace a
+# release lands in is controlled by the Helm/ArgoCD release namespace
+# (Release.Namespace), NOT by this field — unlike the old Terraform module,
+# which set metadata.namespace directly from var.environment_name. Hardcoding
+# namespace inside templates fights how ArgoCD Applications assign
+# destination.namespace, so we don't do it here.
+environment: ""
+
+# -- Value written to the app.kubernetes.io/version label. (was var.service_version)
+serviceVersion: "undefined"
+
+# -- Required. Full image reference, e.g. "registry.example.com/orders-api:1.4.0".
+# (was var.image)
+image: ""
+
+# -- Required. Desired replica count. Ignored (omitted from the Deployment
+# spec) when autoscaling.enabled is true, so the HPA owns replica count
+# instead of fighting the Helm value on every sync. (was var.replicas)
+replicas: 1
+
+# -- Name of an existing imagePullSecret in the target namespace. Only used
+# when oci.enabled is false. Leave empty if the image is public or the
+# namespace's default service account already has pull access.
+# (was var.docker_pull_secret)
+dockerPullSecret: ""
+
+service:
+  # -- Kubernetes Service type: ClusterIP | NodePort | LoadBalancer.
+  # (was var.service_type)
+  type: NodePort
+
+  # -- NodePort value. IMPORTANT: 30000 is a sentinel meaning "let Kubernetes
+  # auto-assign the nodePort" (the port block is rendered without a nodePort
+  # field). Any other value is rendered as an explicit nodePort request.
+  # This mirrors the original module's `var.service_port == 30000` switch.
+  # (was var.service_port)
+  port: 30000
+
+  # -- Container port the application listens on. Used as the Service
+  # targetPort and the container's "rest-api" port. (was var.container_port)
+  containerPort: 8080
+
+  # -- List of named ports exposed on the Service, all pointing at
+  # containerPort. Add more entries for multiple externally-visible ports.
+  # (was var.service_port_block)
+  portBlock:
+    - name: web
+      port: 8888
+      protocol: TCP
+
+# -- Metrics/monitoring port (e.g. Prometheus scrape endpoint). Always
+# created on both Service and container — considered language-agnostic
+# unlike jmx. (was var.monitoring_port)
+monitoring:
+  port: 9933
+
+# -- JVM JMX port. Opt-in: only created when enabled, since it's meaningless
+# for non-JVM runtimes. (was var.jmx_port, which was always-on)
+jmx:
+  enabled: false
+  port: 9010
+
+# -- Container command override. Left empty by default so the image's own
+# ENTRYPOINT is used. (was var.command, which defaulted to ["catalina.sh"])
+command: []
+
+# -- Container args override. Left empty by default so the image's own CMD
+# is used. (was var.args, which defaulted to ["jpda","run"])
+#
+# NOTE: unlike the old module, enabling debug.enabled below does NOT
+# implicitly switch command/args to a Tomcat/JPDA invocation anymore — that
+# was Java-specific. If your runtime's debug mode needs a different
+# command/args (e.g. `node --inspect=0.0.0.0:9229 server.js`,
+# `python -m debugpy ...`, or `catalina.sh jpda run` for Tomcat), set
+# `command`/`args` explicitly alongside `debug.enabled: true`.
+args: []
+
+debug:
+  # -- Master switch for remote-debugging support: exposes debug.containerPort
+  # on the Service and debug.externalPort on the container, and injects
+  # debug.env vars. (was var.debug)
+  enabled: false
+
+  # -- Service-side debug port(s). (was var.debug_container_port)
+  containerPort:
+    - name: debug
+      protocol: TCP
+      port: 9999
+      targetPort: 8000
+
+  # -- Container-side debug port(s). (was var.debug_external_port)
+  externalPort:
+    - name: debug
+      containerPort: 8000
+      protocol: TCP
+
+  # -- Env vars injected only when debug.enabled is true. Empty by default —
+  # populate with runtime-specific debug env vars, e.g. for Java remote
+  # debugging: [{name: JPDA_ADDRESS, value: "*:8000"}, {name: JPDA_TRANSPORT,
+  # value: dt_socket}]. (was var.debug_envs, which defaulted to JPDA values)
+  env: []
+
+# -- Generic extra environment variables, always applied. Use this instead of
+# the old always-on JAVA_OPTS env var. (new, replaces hardcoded JAVA_OPTS)
+# Example:
+#   env:
+#     - name: LOG_LEVEL
+#       value: info
+env: []
+
+# -- If set, injects a JAVA_OPTS env var with this value. Left empty (and
+# therefore omitted) by default so non-JVM services don't get a meaningless
+# env var. (was always-on in the old module; now opt-in)
+javaOpts: ""
+
+# -- TZ env var value. Default changed from the old module's hardcoded
+# "Asia/Colombo" to "UTC" — set explicitly if a service needs a specific zone.
+timezone: "UTC"
+
+resources:
+  limits:
+    cpu: "2"
+    memory: "2G"
+  requests:
+    cpu: "250m"
+    memory: "100M"
+
+healthCheck:
+  # -- HTTP path for the liveness probe. Default changed from the old
+  # module's "/${service_name}/health" to a plain "/health" — set this if
+  # your app serves health checks under a different path.
+  # (was derived from var.liveness_probe_endpoint)
+  livenessPath: "/health"
+
+  # -- HTTP path for the readiness probe, independently configurable from
+  # livenessPath (matching the old module's separate liveness/readiness
+  # endpoint vars). (was derived from var.readiness_probe_endpoint)
+  readinessPath: "/health"
+
+  liveness:
+    initialDelaySeconds: 120
+    periodSeconds: 60
+  readiness:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+
+# -- Map of volumeName -> existing PersistentVolumeClaim name. The chart only
+# references existing PVCs, it does not create them. (was var.persistent_volume)
+# Example:
+#   persistentVolume:
+#     log-volume: my-app-logs-pvc
+persistentVolume: {}
+
+# -- Map of volumeName -> mountPath inside the container. Keys must match
+# persistentVolume keys. (was var.volume_mount)
+# Example:
+#   volumeMount:
+#     log-volume: /usr/local/logs
+volumeMount: {}
+
+# -- Pin the pod to a specific node by name. Leave empty to let the scheduler
+# decide (recommended for most services). (was var.node_name)
+nodeName: ""
+
+# -- Extra labels merged onto every resource, alongside the standard
+# app.kubernetes.io/* labels. (was var.deployment_labels, previously merged
+# with the company-specific service.codegen.co.uk/* labels — those have been
+# dropped in favor of the standard app.kubernetes.io/* set so ArgoCD and
+# other standard tooling recognize the resources out of the box)
+labels: {}
+
+oci:
+  # -- Switches the Deployment to the OCI-specific pod spec (custom DNS
+  # config + pull secret) instead of the local/default spec.
+  # (was var.oci_deployment)
+  enabled: false
+
+  # -- Name of the imagePullSecret to use when oci.enabled is true. No
+  # default — must be supplied by the caller (previously hardcoded to
+  # "iad.ocir.io" in the Terraform module).
+  pullSecretName: ""
+
+  dnsConfig:
+    # -- No default — must be supplied by the caller when oci.enabled is
+    # true (previously hardcoded to ["10.168.0.5"]).
+    nameservers: []
+    # -- No default — must be supplied by the caller when oci.enabled is
+    # true (previously hardcoded to ["codegen.net"]).
+    searches: []
+
+autoscaling:
+  # -- Enables a HorizontalPodAutoscaler and omits `replicas` from the
+  # Deployment spec so the HPA is the sole owner of replica count.
+  # (was the commented-out kubernetes_horizontal_pod_autoscaler in main.tf)
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 2
+  targetCPUUtilizationPercentage: 87
+
+ingress:
+  # -- Creates an Ingress resource for ingress-nginx + cert-manager. New:
+  # not present in the original Terraform module at all.
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  # Routes to the first entry in service.portBlock.
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # Example:
+  # tls:
+  #   - hosts:
+  #       - chart-example.local
+  #     secretName: chart-example-tls
