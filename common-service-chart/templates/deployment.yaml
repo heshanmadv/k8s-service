@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "common-service-chart.fullname" . }}
+  labels:
+    {{- include "common-service-chart.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "common-service-chart.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "common-service-chart.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.nodeName }}
+      nodeName: {{ .Values.nodeName }}
+      {{- end }}
+      {{/*
+      OCI vs local deployment: the original module used two near-identical
+      kubernetes_deployment resources switched via count = var.oci_deployment
+      ? ... . Helm's control flow lets us collapse that into one template.
+      */}}
+      {{- if .Values.oci.enabled }}
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          {{- toYaml .Values.oci.dnsConfig.nameservers | nindent 10 }}
+        searches:
+          {{- toYaml .Values.oci.dnsConfig.searches | nindent 10 }}
+      {{- if .Values.oci.pullSecretName }}
+      imagePullSecrets:
+        - name: {{ .Values.oci.pullSecretName }}
+      {{- end }}
+      {{- else if .Values.dockerPullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.dockerPullSecret }}
+      {{- end }}
+      {{- if .Values.persistentVolume }}
+      volumes:
+        {{- range $name, $claim := .Values.persistentVolume }}
+        - name: {{ $name }}
+          persistentVolumeClaim:
+            claimName: {{ $claim }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ .Values.serviceName }}-container
+          image: {{ required "image is required" .Values.image | quote }}
+          {{- if .Values.command }}
+          command:
+            {{- toYaml .Values.command | nindent 12 }}
+          {{- end }}
+          {{- if .Values.args }}
+          args:
+            {{- toYaml .Values.args | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.livenessPath }}
+              port: {{ .Values.service.containerPort }}
+            initialDelaySeconds: {{ .Values.healthCheck.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthCheck.liveness.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healthCheck.readinessPath }}
+              port: {{ .Values.service.containerPort }}
+            initialDelaySeconds: {{ .Values.healthCheck.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.healthCheck.readiness.periodSeconds }}
+          env:
+            - name: TZ
+              value: {{ .Values.timezone | quote }}
+            {{- if .Values.javaOpts }}
+            - name: JAVA_OPTS
+              value: {{ .Values.javaOpts | quote }}
+            {{- end }}
+            {{- if .Values.debug.enabled }}
+            {{- range .Values.debug.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+            {{- end }}
+            {{- range .Values.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          ports:
+            - name: rest-api
+              containerPort: {{ .Values.service.containerPort }}
+              protocol: TCP
+            - name: monitoring
+              containerPort: {{ .Values.monitoring.port }}
+              protocol: TCP
+            {{- if .Values.jmx.enabled }}
+            - name: jmx
+              containerPort: {{ .Values.jmx.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if .Values.debug.enabled }}
+            {{- range .Values.debug.externalPort }}
+            - name: {{ .name }}
+              containerPort: {{ .containerPort }}
+              protocol: {{ .protocol }}
+            {{- end }}
+            {{- end }}
+          resources:
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+          {{- if .Values.volumeMount }}
+          volumeMounts:
+            {{- range $name, $path := .Values.volumeMount }}
+            - name: {{ $name }}
+              mountPath: {{ $path }}
+            {{- end }}
+          {{- end }}
